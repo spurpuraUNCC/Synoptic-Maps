@@ -1,0 +1,185 @@
+import xarray as xr
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import pygrib
+import cartopy.feature as cfeature
+import metpy.calc as mpcalc
+from metpy.units import units
+
+def syntopic_maps(file_path):
+    
+    name=input('Figure Name: ')
+    
+    #read in file
+    grbs=pygrib.open(file_path)
+    
+    grb=grbs[1]
+    
+    lats,lons=grb.latlons()
+    # Calcualte dx and dy for calculations
+    dx, dy = mpcalc.lat_lon_grid_deltas(lons, lats) 
+
+    ##250 hpa data
+    hght_250=(grbs[31].values)
+    u_250=np.array(grbs[172].values)*units('m/s')
+    v_250=np.array(grbs[173].values)*units('m/s')
+
+    ## Use MetPy to calculate the wind speed for colorfill plot, change units to knots from m/s
+    sped_250 = mpcalc.wind_speed(u_250, v_250).to('kt')
+
+    ##use MetPy to calculate the Divergence 
+    div_250 = mpcalc.divergence(u_250, v_250, dx, dy, dim_order='yx')
+
+    ##500 hpa data
+    hght_500=(grbs[21].values)
+    u_500=np.array(grbs[152].values)*units('m/s')
+    v_500=np.array(grbs[153].values)*units('m/s')
+
+    sped_500 = mpcalc.wind_speed(u_500, v_500).to('kt')
+    #Planetary Vorticity
+    f = mpcalc.coriolis_parameter(np.deg2rad(lats)).to('1/s')
+    # Relative Vorticity
+    vor_500 = mpcalc.vorticity(u_500, v_500, dx, dy,
+                               dim_order='yx')
+    # Abosolute Vorticity
+    avor_500 = vor_500 + f
+
+
+    ##850 hpa data
+    hght_850=(grbs[7].values)
+    rh_850=(grbs[81].values)
+    u_850=np.array(grbs[124].values)*units('m/s')
+    v_850=np.array(grbs[125].values)*units('m/s')
+    temp_850=np.array(grbs[44].values)*units('kelvin')
+
+    # Use MetPy to calculate the wind speed for colorfill plot, change units to knots from m/s
+    sped_850 = mpcalc.wind_speed(u_850, v_850).to('kt')
+
+
+    #Surface data
+    mslp=grbs[223].values/100
+    sfc_dew=grbs[227].values*units('kelvin')
+    sfc_temp=grbs[231].values*units('kelvin')
+    sfc_u=grbs[229].values*units('m/s')
+    sfc_v=grbs[230].values*units('m/s')
+    
+    #mslp=grbs[223].values/100
+    #sfc_dew=grbs[226].values*units('kelvin')
+    #sfc_temp=grbs[230].values*units('kelvin')
+    #sfc_u=grbs[228].values*units('m/s')
+    #sfc_v=grbs[229].values*units('m/s')
+
+
+
+
+    crs = ccrs.LambertConformal(central_longitude=-100.0, central_latitude=45.0)
+
+    # Function used to create the map subplots
+    def plot_background(ax):
+        ax.set_extent([235., 290., 20., 55.])
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.5)
+        ax.add_feature(cfeature.STATES, linewidth=0.5)
+        ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+        return ax
+
+    # Create the figure and plot background on different axes
+    fig, axarr = plt.subplots(nrows=2, ncols=2, figsize=(20, 20), constrained_layout=True,
+                              subplot_kw={'projection': crs})
+    axlist = axarr.flatten()
+    for ax in axlist:
+        plot_background(ax)
+
+    # Upper left plot - 250-hPa winds, geopotential heights, divergence
+    clevs_250 = np.arange(0, 11000, 120)
+    clevs_250_sped = np.arange(50, 250, 20)
+    cf1 = axlist[0].contourf(lons, lats, sped_250,clevs_250_sped, cmap=plt.cm.BuPu, transform=ccrs.PlateCarree())
+    c1 = axlist[0].contour(lons, lats, hght_250, colors='black', linewidths=2,
+                           transform=ccrs.PlateCarree())
+    cs2 = axlist[0].contour(lons, lats, div_250 * 10**5, range(-10, 11, 5),
+                     colors='grey', transform=ccrs.PlateCarree())
+    axlist[0].clabel(c1, fontsize=10, inline=1, inline_spacing=1, fmt='%i', rightside_up=True)
+    axlist[0].set_title('250-hPa Geopotential Height (m), Divergence (1/s), and Wind Speed (kt)',fontsize=16)
+    axlist[0].clabel(cs2, fontsize=10, inline=1, inline_spacing=4,
+               fmt='%i', rightside_up=True, use_clabeltext=True)
+    axlist[0].barbs(lons, lats, u_250.to('kts').m, v_250.to('kts').m,regrid_shape=15,transform=ccrs.PlateCarree())
+    cb1 = fig.colorbar(cf1, ax=axlist[0], orientation='horizontal',pad=0,aspect=50)
+    cb1.set_label('Wind Speed (kts)', size='x-large')    
+
+
+    ##Upper right plot - 500-hPa winds and geopotential heights
+
+    # Filled contours
+    # Set contour intervals for Absolute Vorticity
+    clevavor500 = [-4, -3, -2, -1, 0, 7, 10, 13, 16, 19,
+                   22, 25, 28, 31, 34, 37, 40, 43, 46]
+
+    # Set colorfill colors for absolute vorticity
+    # purple negative
+    # yellow to orange positive
+    colorsavor500 = ('#660066', '#660099', '#6600CC', '#6600FF',
+                     '#FFFFFF', '#ffE800', '#ffD800', '#ffC800',
+                     '#ffB800', '#ffA800', '#ff9800', '#ff8800',
+                     '#ff7800', '#ff6800', '#ff5800', '#ff5000',
+                     '#ff4000', '#ff3000')
+
+    cf2 = axlist[1].contourf(lons, lats, avor_500 * 10**5, clevavor500,
+                     colors=colorsavor500, transform=ccrs.PlateCarree())
+    clev500 = np.arange(0, 7000, 60)
+    cs2 = axlist[1].contour(lons, lats, hght_500, clev500, colors='k',
+                    linewidths=1.0, linestyles='solid', transform=ccrs.PlateCarree())
+    axlist[1].clabel(cs2, fontsize=10, inline=1, inline_spacing=4,
+               fmt='%i', rightside_up=True, use_clabeltext=True)
+    axlist[1].barbs(lons, lats, u_500.to('kts').m, v_500.to('kts').m,
+             regrid_shape=15, transform=ccrs.PlateCarree())
+    axlist[1].set_title('500-hPa Geopotential Height (m), Absolute Vorticity ($10^{-5}$ s$^{-1}$), Wind Speed (kts)',fontsize=16)
+    cb2=fig.colorbar(cf2,ax=axlist[1], orientation='horizontal', pad=0, aspect=50)
+    cb2.set_label(r'$10^{-5}$ s$^{-1}$', size='x-large')
+
+    ##Lower left plot - 850-hPa winds, geopotential heights, RH, temp
+    clevs_850_relh = np.arange(70, 101, 2)
+    cf3 = axlist[2].contourf(lons, lats, rh_850, clevs_850_relh, cmap=plt.cm.Greens,
+                     norm=plt.Normalize(70, 110), transform=ccrs.PlateCarree())
+    clevs_850_hght = np.arange(0, 4000, 30)
+    cs3 = axlist[2].contour(lons, lats, hght_850, clevs_850_hght, colors='black',
+                    transform=ccrs.PlateCarree())
+    cs4 = axlist[2].contour(lons, lats, temp_850.to('degC'), range(-40,40,2),
+                     colors='blue', linestyles='dotted', transform=ccrs.PlateCarree())
+    axlist[2].barbs(lons, lats, u_850.to('kt').m, v_850.to('kt').m, pivot='middle',
+             color='black', regrid_shape=20, transform=ccrs.PlateCarree())
+    axlist[2].clabel(cs3, fmt='%d')
+    axlist[2].clabel(cs4, fontsize=10, inline=1, inline_spacing=10, fmt='%i',
+               rightside_up=True, use_clabeltext=True)
+    axlist[2].set_title('850-hPa Geopotential Heights (m), RH (%), Temperature (C), and Wind Barbs (kt)',
+                        fontsize=16)
+    cb3 = plt.colorbar(cf3,ax=axlist[2], orientation='horizontal', pad=0, aspect=50)
+    cb3.set_label('Relative Humidity (%)',size='x-large')
+
+
+    ##Lower right plot - Surface winds, pressure, temperature, dew point       
+    clev_mslp = np.arange(0, 1200, 4)
+    cs = axlist[3].contour(lons, lats, mslp, clev_mslp, colors='black', linewidths=1.5,
+                   linestyles='solid', transform=ccrs.PlateCarree())
+    axlist[3].clabel(cs, fontsize=10, inline=1, inline_spacing=10, fmt='%i',
+               rightside_up=True, use_clabeltext=True)
+    clevtemp = np.arange(-60, 101, 10)
+    cs2 = axlist[3].contour(lons, lats, sfc_temp.to(units('degF')), clevtemp,
+                     colors='tab:red', linewidths=1.45, linestyles='dotted',
+                     transform=ccrs.PlateCarree())
+    axlist[3].clabel(cs2, fontsize=10, inline=1, inline_spacing=10, fmt='%i',
+               rightside_up=True, use_clabeltext=True)
+    clevdew=np.arange(-60,101,15)
+    cs3 = axlist[3].contour(lons, lats, sfc_dew.to('degF'), clevdew,
+                     colors='blue', linewidths=0.5, linestyles='solid',
+                     transform=ccrs.PlateCarree())
+    axlist[3].clabel(cs3, fontsize=10, inline=1, inline_spacing=10, fmt='%i',
+               rightside_up=True, use_clabeltext=True)
+    axlist[3].barbs(lons, lats, sfc_u.magnitude, sfc_v.magnitude,
+             length=6, regrid_shape=20, pivot='middle', transform=ccrs.PlateCarree())
+    axlist[3].set_title('MSLP (hpa), Surface Temperature (F), 2m Dew Point (F), 2m Wind Barbs (kts)',fontsize=16)
+
+    
+    plt.savefig(str(name)+'.png',dpi=100)
+    
+file_name='user/file.grb2'
+syntopic_maps(file_name)
